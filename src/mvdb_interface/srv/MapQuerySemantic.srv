@@ -1,0 +1,5 @@
+float32[] embedding
+uint32 dim
+float32 similarity_thresh
+---
+sensor_msgs/PointCloud2 points

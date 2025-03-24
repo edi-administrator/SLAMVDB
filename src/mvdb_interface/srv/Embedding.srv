@@ -1,0 +1,4 @@
+string query
+---
+float32[] embedding
+uint32 dim
