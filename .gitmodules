@@ -1,0 +1,3 @@
+[submodule "src/langseg"]
+	path = src/langseg
+	url = https://github.com/edi-administrator/langseg-public.git
