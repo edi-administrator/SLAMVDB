@@ -20,6 +20,11 @@ Included packages:
 * *langseg* - a fork of [LangSeg](https://github.com/isl-org/lang-seg/tree/65c0a0978fa2e562cda695afed1554c63ec35cb) with only the code relevant in image segmentation inference retained. TODO: refactor into proper ROS2 package, clean up the implementation.
 
 
+## License
+The code directly contained in this repository is distributed under an Apache v2.0 license. On a per-package basis:
+* *mvdb*, *mvdb_interface*, *mvdb_py*, *mvdb_tracker*, *mvdb_mapper* - Apache v2.0
+* *langseg* - MIT
+
 ## Build
 
 Clone the repository, and recurse submodules to pull *langseg*:
@@ -43,13 +48,24 @@ Once this is done, the workspace can be built by simply running
 colcon build
 ```
 
-For verbose builds and debugging, run
+For verbose builds and debugging, run. Configuration params selected for decent performance in release compile modes.
 
 ```{bash}
 colcon build --event-handlers console_cohesion+ --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo
 ```
 
-## License
-The code directly contained in this repository is distributed under an Apache v2.0 license. On a per-package basis:
-* *mvdb*, *mvdb_interface*, *mvdb_py*, *mvdb_tracker*, *mvdb_mapper* - Apache v2.0
-* *langseg* - MIT
+## Run
+
+Start the image segmentation service (make sure the model weights are downloaded!)
+
+```{bash}
+source install/setup.bash
+python src/langseg/segmentation_service.py
+```
+
+Then start the mvdb nodes:
+
+```{bash}
+source install/setup.bash
+ros2 launch mvdb mvdb.py
+```
