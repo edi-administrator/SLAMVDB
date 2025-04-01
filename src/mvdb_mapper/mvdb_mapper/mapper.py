@@ -1,6 +1,6 @@
 import numpy as np
 import open3d as o3d
-import g2opy
+from g2o import g2opy
 from dataclasses import dataclass
 from rclpy.impl.rcutils_logger import RcutilsLogger
 from typing import List, Tuple, Generator
@@ -276,7 +276,8 @@ class Mapper():
 
         opt = g2opy.SparseOptimizer()
         solver = g2opy.OptimizationAlgorithmLevenberg(
-            g2opy.BlockSolverSE3(g2opy.LinearSolverCholmodSE3())
+            # g2opy.BlockSolverSE3(g2opy.LinearSolverCholmodSE3())
+            g2opy.BlockSolverSE3(g2opy.LinearSolverDenseSE3())
             )
         opt.set_algorithm(solver)
         LIDAR_COVARIANCE = np.identity(6)
