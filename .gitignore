@@ -22,3 +22,4 @@ log/*
 *.log
 !discrete_colors/*.csv
 !discrete_vectors/*.csv
+!doc/map.png
