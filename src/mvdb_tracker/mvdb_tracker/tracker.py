@@ -1,6 +1,7 @@
 import numpy as np
 import open3d as o3d
 from typing import List
+from mvdb_py.utils import delta_t_norm
 from .config import Config
 
 class Submap:
@@ -61,7 +62,7 @@ class Tracker():
             
             self.T_latest = T_new_corrected_icp
 
-            delta = np.linalg.norm(self.T_latest[:3,3] - self.submap_list[-1].tracker_pose[:3,3])
+            delta = delta_t_norm(self.T_latest, self.submap_list[-1].tracker_pose)
             track_distance = self.submap_list[-1].track_distance + delta
             seq_id = self.submap_list[-1].seq_id + 1
 

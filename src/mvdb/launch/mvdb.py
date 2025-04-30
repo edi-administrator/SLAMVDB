@@ -10,6 +10,10 @@ def generate_launch_description():
             executable='tracker'
         ),
         Node(
+            package='mvdb_tracker',
+            executable='gravity'
+        ),
+        Node(
             package='mvdb_mapper',
             namespace='mvdb_mapper',
             executable='mapper'
@@ -17,5 +21,5 @@ def generate_launch_description():
         Node(
             package='mvdb',
             executable='main'
-        )
+        ),
     ])

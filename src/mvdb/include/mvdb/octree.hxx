@@ -26,8 +26,6 @@ coord_t ockey_to_coord( size_t depth, double res, const ockey_t& key, size_t max
 
 size_t ockey_to_index( size_t depth, const ockey_t& key, size_t maxdepth );
 
-size_t last_same_parent_depth( const ockey_t& a, const ockey_t& b, size_t max_depth );
-
 xkey_t ockey_to_xkey( const ockey_t& key, size_t max_depth );
 
 ockey_t xkey_to_ockey( xkey_t xkey, size_t max_depth );
@@ -168,14 +166,9 @@ struct OctreeParams
     return mvdb::ockey_to_index( maxdepth - 1, key, maxdepth );
   }
 
-  inline size_t last_same_parent_depth( const ockey_t& a, const ockey_t& b ) const
-  {
-    return mvdb::last_same_parent_depth( a, b, maxdepth );
-  }
-
   inline xkey_t ockey_to_xkey( const ockey_t& key ) const
   {
-    return mvdb::ockey_to_xkey( key, maxdepth );
+    return mvdb::ockey_to_xkey( key, maxdepth - 1 );
   }
 
   inline xkey_t translation_to_xkey_leaf( const pose_t& T ) const
@@ -186,7 +179,7 @@ struct OctreeParams
 
   inline ockey_t xkey_to_ockey( u_int64_t ikey ) const
   {
-    return mvdb::xkey_to_ockey( ikey, maxdepth );
+    return mvdb::xkey_to_ockey( ikey, maxdepth - 1 );
   }
 
   inline coord_t xkey_to_coord_leaf( xkey_t xkey ) const

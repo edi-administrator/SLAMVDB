@@ -6,6 +6,7 @@
 #include <optional>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <string>
 #include <sstream>
 #include <Eigen/Dense>
@@ -15,6 +16,9 @@
 
 namespace mvdb
 {
+
+size_t stamp_from_path( const std::filesystem::path& path );
+bool path_stamp_comp( const std::filesystem::path& a, const std::filesystem::path& b );
 
 template<size_t rows, size_t cols>
 inline
@@ -93,13 +97,7 @@ stamped_mats_from_csvs( const std::string& dir, const std::string& ext )
     }
   }
 
-  auto comp = []( const std::filesystem::path& a, const std::filesystem::path& b ) -> bool
-  {
-    return std::stoul( a.filename().stem().string() ) <
-     std::stoul( b.filename().stem().string() );
-  };
-
-  std::sort( paths.begin(), paths.end(), comp );
+  std::sort( paths.begin(), paths.end(), path_stamp_comp );
 
   for ( auto i = 0; i < paths.size(); i++ )
   {
@@ -109,7 +107,7 @@ stamped_mats_from_csvs( const std::string& dir, const std::string& ext )
     if ( mat_opt.has_value() )
     {
       mat_t mat = mat_opt.value().front();
-      size_t stamp = std::stoul( paths[i].filename().stem().string() );
+      size_t stamp = stamp_from_path ( paths[i] );
       out.push_back( elem_t { stamp, mat } );
     }
 
@@ -138,12 +136,43 @@ named_mats_from_csvs( const std::string& dir, const std::string& ext = ".csv" )
   return out;
 }
 
-std::vector<std::pair<size_t, pose_t>> stamped_poses_from_csvs( const std::string& dir, const std::string& ext );
+template<typename scalar>
+inline
+std::vector<scalar>
+load_bin( const std::string& path )
+{
+  std::ifstream infile ( path, std::ios::binary );
+  std::istreambuf_iterator<char> isftream_begin ( infile );
+  std::istreambuf_iterator<char> isftream_end {};
 
-std::optional<std::vector<coord_t>> coords_from_csv( const std::string& path );
+  std::vector<char> contents { isftream_begin, isftream_end };
 
-std::optional<std::vector<pose_t>> poses_from_csv( const std::string& path );
+  if ( contents.size() % sizeof(scalar) != 0 )
+  {
+    throw std::runtime_error( "file size at " + path + " = " + std::to_string(contents.size()) + " does not divide scalar size!" );
+  }
+
+  std::vector<scalar> out ( contents.size() / sizeof(scalar) );
+  std::memcpy( reinterpret_cast<void*>( out.data() ), contents.data(), contents.size() ); 
+
+  return out;
+}
+
 
 std::optional<std::vector<vec_t>> vectors_from_csv( const std::string& path );
+std::optional<std::vector<coord_t>> coords_from_csv( const std::string& path );
+
+std::vector<std::pair<size_t, pose_t>> stamped_poses_from_csvs( const std::string& dir, const std::string& ext );
+std::optional<std::vector<pose_t>> poses_from_csv( const std::string& path );
+
+std::vector<vec_t> vectors_from_bin( const std::string& path );
+std::vector<coord_t> coords_from_bin( const std::string& path );
+
+
+std::string strip_leading_whitespace( const std::string& s );
+std::string strip_trailing_whitespace( const std::string& s );
+std::string strip( const std::string& s );
+std::vector<std::string> tokenize( std::istream& istream, const char delim );
+std::vector<std::string> tokenize( const std::string& str, const char delim );
 
 };

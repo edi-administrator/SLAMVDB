@@ -15,6 +15,7 @@ using pxf_t = Eigen::Vector2d;
 using pxi_t = Eigen::Vector2i;
 using pose_t = Eigen::Matrix4d;
 using intr_t = Eigen::Matrix3d;
+using dstr_t = Eigen::Vector4d;
 
 const size_t k_size_max = std::numeric_limits<size_t>::max();
 constexpr double k_pi = 3.14159265358979323846;

@@ -1,0 +1,5 @@
+MAP_FILE_POINTS_IN: /mnt/media/user/repos/image_semantic_classification/data/courtyard_no_gt/converted_bag/
+MAP_FILE_POSES_IN: /mnt/media/user/repos/image_semantic_classification/data/courtyard_no_gt/tracker_poses
+MAP_FILE_POSES_OUT: /mnt/media/user/repos/image_semantic_classification/data/courtyard_no_gt/mapper_poses
+
+MAPPER_SUBMAP_THRESH: 2.0

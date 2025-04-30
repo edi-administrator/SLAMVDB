@@ -181,7 +181,6 @@ class Submap
     std::optional<const Record*> 
     get_at_skey( const skey_t& skey ) const;
 
-    void compute_bbox();
     void compute_unique_keys( const OctreeParams& sample_params );
     void copy_into( const Submap& other, const SpatialConstraint& filter = IdentityConstraint() );
     void insert_scan( const std::vector<coord_t>& scan, const pose_t& T );
@@ -202,20 +201,21 @@ class Submap
     inline Octree& tree() { return m_tree; }
     inline const Octree& tree() const { return m_tree; }
 
-    inline const std::vector<coord_t>& corners() const { return m_record_corners; }
     inline const size_t& stamp() const { return m_pose_stamp; }
     inline const size_t& seq_id() const { return m_seq_id; }
     inline const std::vector<TimeInterval>& intervals() const { return m_covered_intervals; }
     inline const pose_t& pose() const { return m_Tws; }
-    inline const pose_t& mapper_pose() const { return m_Twm; } 
+    inline const pose_t& mapper_pose() const { return m_Twm; }
     inline const Index& global_idx() const { return m_gidx; }
     inline const SpatialIndex& spatial_idx() const { return m_xidx; }
     inline const SemanticIndex& semantic_idx() const { return m_sidx; }
     inline const std::unordered_map<xkey_t, uid_t>& get_xidx_map() const { return m_xidx.get_map(); };
 
+    inline std::vector<coord_t> get_points_sbmp() const { return m_tree.filtered_pts(); }
+    inline std::vector<coord_t> get_points_world_tracker() const { return apply_T( m_Tws, get_points_sbmp() ); }
+    inline std::vector<coord_t> get_points_world_mapper() const { return apply_T( m_Twm, get_points_sbmp() ); }
   
   protected:
-    std::vector<coord_t> m_record_corners;
     std::unordered_set<xkey_t> m_unique_keys;
     size_t m_seq_id = -1UL;
     size_t m_pose_stamp = -1UL;
@@ -287,9 +287,7 @@ class VoxelLookup
     void put( size_t seq_id, const pose_t& T, const Record* const& v );
     void put( size_t seq_id, const pose_t& T, const std::vector<const Record*>& records );
 
-    void erase( size_t seq_id, const std::vector<xkey_t>& xkeys );
     void erase( size_t seq_id );
-    void erase( size_t seq_id, const pose_t& T, const std::vector<const Record*>& records );
 
     std::optional<Record> get( xkey_t xkey );
     std::vector<Record> get_surface();
@@ -307,6 +305,7 @@ class VoxelLookup
     FrustumConstraint m_bbox;
     LocalVoxelLookupParams m_params;
     std::unordered_map<xkey_t, std::unordered_map<size_t, cell_entry_t>> m_map;
+    std::unordered_map<size_t, std::unordered_set<xkey_t>> m_reverse_index;
 };
 
 struct GlobalVoxelMapParams
@@ -330,6 +329,7 @@ class GlobalVoxelMap
 
     std::vector<std::shared_ptr<VoxelLookup>>  at_filtered( const SpatialConstraint& filter );
     std::vector<std::shared_ptr<VoxelLookup>> at_set( const std::unordered_set<xkey_t>& xkeys );
+    inline std::vector<std::shared_ptr<VoxelLookup>> all() { return at_filtered( IdentityConstraint() ); }
 
     inline std::unordered_map<xkey_t, std::shared_ptr<VoxelLookup>> cells() { return m_global_map; }
     inline const OctreeParams& tree_params() const { return m_tree_params; }
@@ -340,6 +340,7 @@ class GlobalVoxelMap
     LocalVoxelLookupParams m_default_params;
     OctreeParams m_tree_params;
     std::unordered_map<xkey_t, std::shared_ptr<VoxelLookup>> m_global_map;
+    
 };
 
 }

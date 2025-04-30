@@ -28,6 +28,8 @@ setup(
     entry_points={
         'console_scripts': [
             'tracker = mvdb_tracker.tracker_node:main',
+            'file_tracker = mvdb_tracker.track_files:track_in_files',
+            'gravity = mvdb_tracker.gravity_node:main'
         ],
     },
 )

@@ -1,6 +1,25 @@
 cmake_minimum_required(VERSION 3.8)
 project(mvdb)
 
+if(USE_OPENGL)
+  message(STATUS "USE_OPENGL is ON")
+else()
+  message(STATUS "USE_OPENGL is OFF")
+  set(USE_OPENGL OFF CACHE BOOL "Enable OpenGL support" FORCE) # Ensure it's OFF if not explicitly ON
+endif()
+
+if(NOT DEFINED USE_OPENGL)
+  set(USE_OPENGL OFF CACHE BOOL "Enable OpenGL support" FORCE)
+  message(STATUS "USE_OPENGL not defined, setting to default OFF")
+endif()
+
+# Set the C++ standard to C++20
+set(CMAKE_CXX_STANDARD 20)
+# Require the specified standard (compilation will fail if not supported)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+# Disable compiler-specific extensions
+set(CMAKE_CXX_EXTENSIONS OFF)
+
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   # add_compile_options(-Wall -Wextra -Wpedantic -Wno-reorder -Wno-sign-compare)
   # add_compile_options(-Wall -Wextra -Wno-reorder -Wno-sign-compare)
@@ -19,6 +38,16 @@ find_package(std_msgs REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(OpenMP)
 
+# for now just global include
+
+if (USE_OPENGL)
+  set(OpenGL_GL_PREFERENCE LEGACY)
+  find_package(OpenGL REQUIRED)
+  find_package(glfw3 REQUIRED) # Add this line to find GLFW
+  find_package(GLEW REQUIRED)
+endif()
+
+
 if(OPENMP_FOUND)
     set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")
     set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
@@ -26,8 +55,18 @@ endif()
 
 set(${PROJECT_NAME}_include_dirs
   include/mvdb
+  include/opengl_cpp
   ${EIGEN3_INCLUDE_DIRS}
 )
+
+if (USE_OPENGL)
+  set(${PROJECT_NAME}_include_dirs 
+    ${${PROJECT_NAME}_include_dirs}
+    ${OpenGL_INCLUDE_DIRS} 
+    ${glfw3_INCLUDE_DIRS}
+    ${GLEW_INCLUDE_DIRS}
+  )
+endif()
 
 include_directories(${${PROJECT_NAME}_include_dirs})
 
@@ -42,7 +81,17 @@ set(${PROJECT_NAME}_test_targets
 
 set(${PROJECT_NAME}_exec_targets
   main
+  static_map
+  point_filter
+  gpu_projector
 )
+
+if (USE_OPENGL)
+  set(${PROJECT_NAME}_exec_targets
+    ${${PROJECT_NAME}_exec_targets}
+    screen
+  )
+endif()
 
 set(${PROJECT_NAME}_lib_targets
   math_utils
@@ -77,6 +126,24 @@ set(${PROJECT_NAME}_rostargets
 foreach(exe ${${PROJECT_NAME}_exec_targets})
   add_executable(${exe} src/${exe}.cpp)
 endforeach()
+
+if (USE_OPENGL)
+  target_compile_definitions(main
+    PRIVATE
+    __USE_OPENGL
+  )
+  target_compile_definitions(gpu_projector
+    PRIVATE
+    __USE_OPENGL
+  )
+endif()
+
+if (USE_OPENGL)
+  set(${PROJECT_NAME}_libraries
+    OpenGL::GL
+    glfw GLEW::GLEW
+  )
+endif()
 
 foreach(lib ${${PROJECT_NAME}_lib_targets})
   add_library(${lib} lib/${PROJECT_NAME}/${lib}.cpp)
@@ -121,5 +188,6 @@ endif()
 install(TARGETS ${${PROJECT_NAME}_lib_targets} ${${PROJECT_NAME}_exec_targets} DESTINATION lib/${PROJECT_NAME})
 install(DIRECTORY config DESTINATION share/${PROJECT_NAME})
 install(DIRECTORY launch DESTINATION share/${PROJECT_NAME})
+install(DIRECTORY shaders DESTINATION share/${PROJECT_NAME})
 
 ament_package()

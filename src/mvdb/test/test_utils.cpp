@@ -1,8 +1,25 @@
 #include <gtest/gtest.h>
 #include <filesystem>
 #include <sstream>
+#include "math_utils.hxx"
 #include "utils.hxx"
 #include "ros_utils.hxx"
+
+TEST(test_constraint, test_collection)
+{
+  using namespace mvdb;
+
+  std::cerr << "STOPE HERE\n";
+  std::vector<std::shared_ptr<SpatialConstraint>> constraints_and { std::make_shared<IdentityConstraint>() };
+  std::vector<std::shared_ptr<SpatialConstraint>> constraints_or { std::make_shared<ZeroConstraint>() };
+
+  CollectionConstraint should_fail { constraints_or, constraints_and };
+  CollectionConstraint should_succed { constraints_and, constraints_and };
+
+  EXPECT_FALSE( should_fail.within( vec_t::Zero() ) );
+  EXPECT_TRUE( should_succed.within( vec_t::Zero() ) );
+
+}
 
 TEST(test_io_utils, read_coord_success_size)
 {

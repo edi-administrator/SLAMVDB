@@ -113,6 +113,38 @@ void ThreadsafeStampMap<T_value>::put_all( const std::map<size_t, T_value>& othe
 }
 
 
+template<typename T_value>
+void ThreadsafeStampMap<T_value>::trim_to_size( size_t max_size, size_t scaler )
+{
+  auto l = _get_lock();
+  if ( m_map.size() > max_size * scaler )
+  {
+    auto cutoff = m_map.rbegin();
+    for ( size_t i = 0; i < max_size; i++ )
+    {
+      cutoff++;
+    }
+    m_map.erase( cutoff.base(), m_map.end() );
+  }
+}
+
+template<typename T_value>
+std::pair<size_t, size_t> ThreadsafeStampMap<T_value>::get_limits()
+{
+  auto l = _get_lock();
+
+  if ( !m_map.empty() )
+  {
+    size_t start = m_map.cbegin()->first;
+    size_t stop = m_map.crbegin()->first;
+    return { start, stop };
+  }
+  else
+  {
+    return { -1UL, -1UL };
+  }
+}
+
 ImageBuffer::ImageBuffer( const ImageBufferParams& params )
 : rclcpp::Node( params.node_name, params.node_options )
 {
@@ -212,10 +244,62 @@ void ImageBuffer::image_cb( sensor_msgs::msg::Image::UniquePtr img )
 
 }
 
+ImageSubBuffer::ImageSubBuffer( const ImageBufferParams& params )
+: m_params(params), rclcpp::Node( params.node_name, params.node_options )
+{
+  m_image_sub = create_subscription<mvdb_interface::msg::VectorImage>(
+    params.service_path, 10, std::bind( &ImageSubBuffer::image_cb, this, std::placeholders::_1 )
+  );
+}
+
+void ImageSubBuffer::image_cb( mvdb_interface::msg::VectorImage::UniquePtr img )
+{
+  if ( img->dtype == k_dtype_spec )
+  {
+    auto timestamp_ns = header_to_ns( img->header );
+
+    auto dptr = static_cast<void*>( img->data.data() );
+    auto _fptr = static_cast<sem_t::Scalar*>( dptr );
+
+    size_t step = img->c;
+    size_t size = img->w * img->h * img->c;
+
+    auto vimg = std::make_shared<std::vector<sem_t>>();
+    vimg->reserve( img->h * img->w );
+
+    for ( auto fptr = _fptr; fptr <= _fptr + size - step; fptr += step )
+    {
+      sem_t px = Eigen::Map<sem_t>(fptr);
+      vimg->push_back( px );
+    }
+    
+    m_stamped_vimg.put( timestamp_ns, vimg );
+    m_stamped_sizes.put( timestamp_ns, { img->h, img->w, img->c } );
+
+    m_stamped_vimg.trim_to_size( m_params.max_size );
+    m_stamped_sizes.trim_to_size( m_params.max_size );
+
+  }
+}
+
+std::map<size_t, std::shared_ptr<std::vector<sem_t>>> ImageSubBuffer::get_up_to( size_t timestamp_ns )
+{  
+  return m_stamped_vimg.pull_range( 0UL, timestamp_ns );
+}
+
+
+std::tuple<size_t,size_t,size_t> ImageSubBuffer::h_w_c( size_t timestamp_ns )
+{
+  auto bounds = m_stamped_sizes.get_boundary_kv( timestamp_ns, timestamp_ns );
+  return bounds.first.second;
+}
+
 
 ScanBuffer::ScanBuffer( const ScanBufferParams& params )
- : rclcpp::Node( params.node_name, params.node_options )
+ : m_params( params ), rclcpp::Node( params.node_name, params.node_options )
 {
+  m_constraint = std::make_unique<PointCropConstriant>( params.exclusion_radius, params.exclusion_phi_start, params.exclusion_phi_end );
+
   m_lidar_sub = create_subscription<sensor_msgs::msg::PointCloud2>( 
     params.topic, 10, std::bind( &ScanBuffer::scan_cb, this, std::placeholders::_1 ) 
   );
@@ -223,11 +307,12 @@ ScanBuffer::ScanBuffer( const ScanBufferParams& params )
 
 void ScanBuffer::scan_cb( sensor_msgs::msg::PointCloud2::UniquePtr scan )
 {
+
   auto timestamp_ns = header_to_ns( scan->header );
-  auto coord = coord_from_pcd( *scan, OuterSphericalConstraint { vec_t::Zero(), 1.5 } );
+  auto coord = coord_from_pcd( *scan, *m_constraint, m_params.row_step, m_params.col_step, m_params.is_colmajor );
   
   m_stamped_pts_.put( timestamp_ns, coord );
-  m_last_stamp.store(timestamp_ns);
+  m_last_stamp.store( timestamp_ns );
 }
 
 std::map<size_t, std::vector<coord_t>> ScanBuffer::get_up_to( size_t timestamp_ns )
@@ -267,6 +352,13 @@ void PoseBuffer::transform_cb( geometry_msgs::msg::TransformStamped::UniquePtr t
     m_latest_stamp.store(timestamp_ns);
   }
   m_stamped_pose_.put(timestamp_ns, T);
+}
+
+
+bool PoseBuffer::in_range( size_t timestamp_ns )
+{
+  auto [t_start, t_end] = m_stamped_pose_.get_limits();
+  return t_start <= timestamp_ns && timestamp_ns < t_end;
 }
 
 pose_t PoseBuffer::pose_at( size_t timestamp_ns )

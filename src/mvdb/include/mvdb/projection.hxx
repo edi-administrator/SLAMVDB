@@ -36,8 +36,20 @@ struct ProjectionParams
 {
   size_t w = 100;
   size_t h = 100;
+  size_t supersample = 1;
+  float near = 0.1;
+  float far = 20;
   intr_t K = intr_t::Identity();
+  dstr_t D = dstr_t::Zero();
   pose_t T_scan_camera = pose_t::Identity();
+};
+
+struct ProjectionResult
+{
+  std::vector<sem_t> sem;
+  std::vector<size_t> counts;
+  std::vector<xkey_t> keys;
+  std::vector<nano_t> times;
 };
 
 class ProjectionBuffer
@@ -47,7 +59,10 @@ class ProjectionBuffer
     ProjectionBuffer( size_t w, size_t h, const Eigen::Matrix3d& K, const Eigen::Matrix4d& T );
     ProjectionBuffer( const Eigen::Matrix4d& T, const ProjectionParams& params = ProjectionParams {} ) : ProjectionBuffer( params.w, params.h, params.K, T * params.T_scan_camera ) {};
     void project( Octree& tree );
+    void project( const std::vector<coord_t>& tree, const OctreeParams& params );
     void fill_sem( const std::vector<sem_t>& values );
+    ProjectionResult put_sem( const std::vector<sem_t>& values );
+    void put_sem( const std::vector<sem_t>& values, ProjectionResult& result );
 
     inline const std::vector<sem_t>& sem() const { return m_sem; }
     inline const std::vector<size_t>& counts() const { return m_counts; } 
@@ -67,6 +82,51 @@ class ProjectionBuffer
     FrustumConstraint m_frustum;
     std::unordered_map<size_t, xkey_t> m_closest_key;
     std::unordered_map<size_t, double> m_z;
+};
+
+struct RenderingRequest
+{
+  OctreeParams tree_params;
+  std::vector<coord_t> points;
+  std::vector<pose_t> camera_poses;
+  std::vector<std::shared_ptr<std::vector<sem_t>>> images;
+};
+
+class IProjector
+{
+  public:
+    virtual ~IProjector() = default;
+    virtual ProjectionResult render( std::shared_ptr<const RenderingRequest> request ) = 0;
+};
+
+
+class CPUProjectorWrapper : public IProjector
+{
+  public:
+    ~CPUProjectorWrapper() = default;
+    CPUProjectorWrapper( const ProjectionParams& params = ProjectionParams {} )
+    : m_params( params )
+    {
+    }
+
+    virtual ProjectionResult render( std::shared_ptr<const RenderingRequest> request ) override
+    {
+      ProjectionResult out;
+      size_t step = std::max( 1UL, request->camera_poses.size() / 8UL );
+      for ( size_t i = 0; i < request->camera_poses.size(); i += step )
+      {
+        ProjectionBuffer pbuf ( request->camera_poses[i], m_params );
+        pbuf.project( request->points, request->tree_params );
+        pbuf.put_sem( *request->images[i], out );
+      }
+      return out;
+    }
+  
+  protected:
+    ProjectionParams m_params;
+    OctreeParams m_tree_params;
+    std::vector<coord_t> m_points;
+
 };
 
 }

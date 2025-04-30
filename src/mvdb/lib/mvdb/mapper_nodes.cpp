@@ -9,7 +9,8 @@ LocalMapper::LocalMapper( const LocalMapperParams& params )
   m_pbuf(params.pbuf), 
   m_ibuf( params.ibuf ), 
   m_quantizer( params.quantizer ),
-  m_proj_params( params.projection_params ), 
+  m_projector( params.projector ),
+  m_process_n_images( params.process_n_images ),
   rclcpp::Node( "local_mapper", params.opt )
 {
 
@@ -56,17 +57,19 @@ void LocalMapper::timer_cb()
   size_t end = ( t_last_item == 0 ) ? 0 : t_last_item - image_process_padding.count() - image_delay.count();
 
   auto scans_lately = m_sbuf->get_up_to( t_last_item - image_process_padding.count() );
-  auto images_lately = m_ibuf->pull_range( start, end );
+  // auto images_lately = m_ibuf->pull_range( start, end );
+  auto images_lately = m_ibuf->get_up_to( end );
 
   m_ns_last = t_last_scan;
 
-  RCLCPP_INFO( get_logger(), "pulled %lu scans", scans_lately.size() );
+  // RCLCPP_INFO( get_logger(), "pulled %lu scans", scans_lately.size() );
   RCLCPP_INFO( get_logger(), "pulled %lu images", images_lately.size() );
 
   auto scan_iterator = scans_lately.begin();
   auto img_iterator = images_lately.begin();
 
   while( now - cycle_start < m_ns_period / 2 - image_process_padding.count() && scan_iterator != scans_lately.end() )
+  // while( now - cycle_start < m_ns_period / 3 - image_process_padding.count() && scan_iterator != scans_lately.end() )
   {
     auto& [stamp, scan] = *(scan_iterator++);
 
@@ -79,18 +82,36 @@ void LocalMapper::timer_cb()
     now = get_clock()->now().nanoseconds();
   }
 
-  while( now - cycle_start < m_ns_period - image_process_padding.count() &&  img_iterator != images_lately.end() )
-  {
-    auto& [stamp, image] = *(img_iterator++);
+  auto req = std::make_shared<RenderingRequest>();
+  req->points = m_sbmp->get_points_sbmp();
+  req->tree_params = m_sbmp->tree().params();
 
-    pose_t T_w_scan = m_pbuf->pose_at(stamp);
-    
-    ProjectionBuffer pbuf { m_sbmp->pose().inverse() * T_w_scan, m_proj_params };
-    pbuf.project( m_sbmp->tree() );
-    pbuf.fill_sem( *image );
-    
-    m_sbmp->insert_new_records( pbuf.sem(), pbuf.counts(), pbuf.keys(), pbuf.times() );
-    now = get_clock()->now().nanoseconds();
+  for ( size_t i = 0; i < m_process_n_images; i++ )
+  {
+    if ( img_iterator == images_lately.end() )
+    {
+      break;
+    }
+
+    auto& [stamp, image] = *(img_iterator++);
+    if ( m_pbuf->in_range( stamp ) )
+    {
+      req->camera_poses.push_back( m_sbmp->pose().inverse() * m_pbuf->pose_at(stamp) );
+      req->images.push_back( image );
+    }
+    else
+    {
+      RCLCPP_INFO( get_logger(), "dropped img out ouf range at %lu", stamp );
+    }
+  }
+
+  if ( req->camera_poses.size() > 0 )
+  {
+
+    RCLCPP_INFO( get_logger(), "making projection call with %lu images", req->camera_poses.size() );
+    auto result = m_projector->render( req );
+    RCLCPP_INFO( get_logger(), "projection call returned" );
+    m_sbmp->insert_new_records( result.sem, result.counts, result.keys, result.times );
   }
 
   while( img_iterator != images_lately.end() )
@@ -137,7 +158,7 @@ void LocalMapper::timer_cb()
     m_unused_poses.clear();
   }
 
-  auto pts = apply_T( m_sbmp->pose(),  m_sbmp->tree().filtered_pts( IdentityConstraint() ) );
+  auto pts = m_sbmp->get_points_world_tracker();
   m_occ_pub->publish( pcd_from_coord( pts, "tracker_frame" ) );
 
   publish_sem();
@@ -146,8 +167,7 @@ void LocalMapper::timer_cb()
 void LocalMapper::publish_sem()
 {
   auto keys = m_sbmp->filter_xkeys();
-  auto pts = m_sbmp->tree().filtered_pts();
-
+  
   std::vector<coord_t> coords;
   std::vector<double> color;
 
@@ -164,12 +184,15 @@ void LocalMapper::publish_sem()
 GlobalMapper::GlobalMapper( const GlobalMapperParams& params )
  : m_voxel_lookup( params.lookup_params ),
   m_global_voxel ( params.global_vox_params ),
-  m_pcd(false), 
-  m_sem_pcd( std::make_shared<MutablePointCloud2>( true ) ), 
-  m_projection_params( params.projection_params ), 
+  m_pcd( false, params.floating_frame ), 
+  m_sem_pcd( std::make_shared<MutablePointCloud2>( true,  params.floating_frame ) ), 
+  m_projector( params.projector ),
   m_tree_params( params.tree_params ), 
+  m_params( params ),
   rclcpp::Node( "global_mapper", params.opt )
 {
+
+  m_active_frame = params.floating_frame;
 
   m_occ_pub = create_publisher<sensor_msgs::msg::PointCloud2>( "/global_mapper_occ", 1 );
   m_sem_pub = create_publisher<sensor_msgs::msg::PointCloud2>( "/global_mapper_sem", 1 );
@@ -211,9 +234,20 @@ GlobalMapper::GlobalMapper( const GlobalMapperParams& params )
     params.topic, 10, std::bind( &GlobalMapper::loop_cb, this, std::placeholders::_1 ), subopt
   );
 
+  m_grav_sub = this->create_subscription<geometry_msgs::msg::TransformStamped>(
+    params.gravity_topic, 10, std::bind( &GlobalMapper::grav_cb, this, std::placeholders::_1 )
+  );
+
   m_srv_semantic = this->create_service<semantic_srv_t>( 
     "semantic_service",
     std::bind( &GlobalMapper::semantic_cb, this, std::placeholders::_1, std::placeholders::_2 ),
+    rmw_qos_profile_services_default,
+    m_cb_group_timer 
+  );
+
+  m_srv_planar = this->create_service<planar_srv_t>( 
+    "planar_service",
+    std::bind( &GlobalMapper::discrete_planar_cb, this, std::placeholders::_1, std::placeholders::_2 ),
     rmw_qos_profile_services_default,
     m_cb_group_timer 
   );
@@ -244,6 +278,57 @@ void GlobalMapper::semantic_cb( const std::shared_ptr<semantic_srv_t::Request> r
   {
     RCLCPP_ERROR( get_logger(), "[semantic search service] incorrect query vector size = %u", req->dim );
   }
+}
+
+void GlobalMapper::discrete_planar_cb( const std::shared_ptr<planar_srv_t::Request> req, std::shared_ptr<planar_srv_t::Response> resp )
+{
+  RCLCPP_INFO( get_logger(), "received planar map request" );
+  auto all_grid_cells = m_global_voxel.all();
+  std::vector<Record> surface_records;
+  std::vector<int8_t> grid_data ( m_params.planar_map_extent_x * m_params.planar_map_extent_y, 99 );
+
+  double voxel_resolution = m_params.lookup_params.tree_params.res;
+  size_t total_count = 0;
+
+  for ( auto& cell : all_grid_cells )
+  {
+    auto local_surface = cell->get_surface();
+    
+    for ( auto& record : local_surface )
+    {
+      vec_t local_coord = apply_T( 
+        cell->pose(), 
+        cell->tree_params().xkey_to_vec_leaf_centered( record.xkey ) 
+      );
+
+      local_coord.x() /= voxel_resolution;
+      local_coord.y() /= voxel_resolution;
+
+      local_coord.x() += m_params.planar_map_extent_x / 2;
+      local_coord.y() += m_params.planar_map_extent_y / 2;
+
+      if ( local_coord.x() > 0 && local_coord.x() < m_params.planar_map_extent_x &&
+            local_coord.y() > 0 && local_coord.y() < m_params.planar_map_extent_y )
+      {
+        total_count++;
+        size_t row = size_t( floor( local_coord.y() ) );
+        size_t col = size_t( floor( local_coord.x() ) );
+
+        grid_data[ row * m_params.planar_map_extent_x + col ] = int8_t(
+           ( 1 - cell->params().quantizer->color_mono( record.similarities ) ) * 100 );
+      }
+      
+    }
+  }
+  
+  RCLCPP_INFO( get_logger(), "returning with %lu filled cells", total_count );
+  resp->map.info.height = m_params.planar_map_extent_y;
+  resp->map.info.width = m_params.planar_map_extent_x;
+  resp->map.info.resolution = voxel_resolution;
+  resp->map.info.origin.position.x = voxel_resolution * -m_params.planar_map_extent_x / 2;
+  resp->map.info.origin.position.y = voxel_resolution * -m_params.planar_map_extent_y / 2;
+  resp->map.data = grid_data;
+  resp->map.header.frame_id = "mapper_frame";
 }
 
 std::vector<coord_t> GlobalMapper::search( const sem_t& query, sem_t::Scalar threshold, const SpatialConstraint& filter )
@@ -292,6 +377,21 @@ void GlobalMapper::loop_cb( mvdb_interface::msg::LoopMessage::UniquePtr msg )
   }
 }
 
+void GlobalMapper::grav_cb( geometry_msgs::msg::TransformStamped::UniquePtr msg )
+{
+  if ( !m_grav_is_set.load() )
+  {
+    {
+      std::lock_guard<std::mutex> lock_grav ( m_mutex_grav );
+      m_T_gravity_mapper = pose_from_transform_msg( *msg );
+    }
+    m_active_frame = m_params.gravity_frame;
+    m_pcd.replace_frame( m_active_frame );
+    m_sem_pcd->replace_frame( m_active_frame );
+    m_grav_is_set.store(true);
+  }
+}
+
 void GlobalMapper::timer_cb_correction()
 {
   std::vector<std::tuple<size_t,size_t,pose_t>> loops;
@@ -305,9 +405,17 @@ void GlobalMapper::timer_cb_correction()
     }
   }
 
+  pose_t T_grav_map;
+  std::string active_frame;
+  {
+    std::lock_guard<std::mutex> lock_grav ( m_mutex_grav );
+    T_grav_map = m_T_gravity_mapper;
+    active_frame = m_active_frame;
+  }
+
   for ( auto& [idx, sbmp] : m_submaps_all )
   {
-    sbmp->set_mapper_pose( _extrapolate_pose_at( sbmp->stamp() ) );
+    sbmp->set_mapper_pose( T_grav_map * _extrapolate_pose_at( sbmp->stamp() ) );
     render_submap( sbmp, false );
   }
 
@@ -362,7 +470,7 @@ void GlobalMapper::timer_cb_correction()
     vis->reinsert();
   }
 
-  m_grid_pub->publish( pcd_from_coord( grid_centers, "mapper_frame" ) );
+  m_grid_pub->publish( pcd_from_coord( grid_centers, active_frame ) );
   m_pbuf->publish_pose_cloud();
   m_occ_pub->publish( m_pcd.msg() );
   m_sem_pub->publish( m_sem_pcd->msg() );
@@ -396,19 +504,35 @@ void GlobalMapper::timer_cb_single()
   auto poses_it = poses.begin();
   auto images_it = images.begin();
 
+  auto req = std::make_shared<RenderingRequest>();
+  req->points = sbmp->get_points_sbmp();
+  req->tree_params = sbmp->tree().params();
+
   while ( poses_it != poses.end() )
   {
-    RCLCPP_INFO( get_logger(), "projecting unused image at t %lu", poses_it->first );
-
+    if ( images_it == images.end() )
+    {
+      throw std::runtime_error( "[timer_cb_single] images size does not match poses size!" );
+    }
+    RCLCPP_INFO( get_logger(), ( "unused image at " + std::to_string( poses_it->first ) ).c_str() );
     auto& pose = (poses_it++)->second;
     auto& image = (images_it++)->second;
-
-    ProjectionBuffer pbuf ( sbmp->pose().inverse() * pose, m_projection_params );
-    pbuf.project( sbmp->tree() );
-    sbmp->insert_new_records( pbuf.sem(), pbuf.counts(), pbuf.keys(), pbuf.times() );
+    req->camera_poses.push_back( sbmp->pose().inverse() * pose );
+    req->images.push_back( image );
   }
 
-  sbmp->set_seq_id(m_count++);
+  if ( req->camera_poses.size() > 0 )
+  {
+
+    RCLCPP_INFO( get_logger(), "making projection call with %lu images", req->camera_poses.size() );
+    auto start = get_clock()->now().nanoseconds();
+    auto result = m_projector->render( req );
+    auto end = get_clock()->now().nanoseconds();
+    RCLCPP_INFO( get_logger(), "projection call returned in %f s", double( end - start ) / 1e9 );
+    sbmp->insert_new_records( result.sem, result.counts, result.keys, result.times );
+  }
+
+  sbmp->set_seq_id( m_count++ );
   sbmp->set_mapper_pose( sbmp->pose() );
   sbmp->compute_unique_keys( m_global_voxel.tree_params() );
 
@@ -430,10 +554,11 @@ void GlobalMapper::render_submap( sbmp_t sbmp, bool reinsert )
 {
   if ( reinsert )
   {
-    auto pts = sbmp->tree().filtered_pts();
+    auto pts = sbmp->get_points_sbmp();
+
     if ( !m_pcd.has_idx( sbmp->seq_id() ) )
     {
-      m_pcd.put( sbmp->seq_id(), sbmp->tree().filtered_pts(), sbmp->mapper_pose() );
+      m_pcd.put( sbmp->seq_id(), pts, sbmp->mapper_pose() );
     }
     else
     {
@@ -458,7 +583,7 @@ void GlobalMapper::render_submap( sbmp_t sbmp, bool reinsert )
       size_t cell_index = vm->params().count;
 
       RCLCPP_INFO( get_logger(), "clearing  sbmp %lu from vm %lu", sbmp->seq_id(), cell_index );
-      vm->erase( sbmp->seq_id(), T_sem_last, records );
+      vm->erase( sbmp->seq_id() );
 
       RCLCPP_INFO( get_logger(), "inserting sbmp %lu into vm %lu", sbmp->seq_id(), cell_index );
       vm->put( sbmp->seq_id(), sbmp->mapper_pose(), records );
@@ -471,9 +596,11 @@ void GlobalMapper::render_submap( sbmp_t sbmp, bool reinsert )
       {
         m_visualizers[cell_index]->mark_should_reinsert();
       }
+
+      // I think this was meant to go inside the if statement? otherwise it just continuously resets
+      m_submap_last_render_sem[sbmp->seq_id()] = sbmp->mapper_pose();
     }
 
-    m_submap_last_render_sem[sbmp->seq_id()] = sbmp->mapper_pose();
   }
 
 }

@@ -27,7 +27,7 @@ std_msgs::msg::Header ns_to_header( size_t timestamp_ns )
   return h;
 }
 
-std::vector<coord_t> coord_from_pcd( const sensor_msgs::msg::PointCloud2& pcd, const SpatialConstraint& filter )
+std::vector<coord_t> coord_from_pcd( const sensor_msgs::msg::PointCloud2& pcd, const SpatialConstraint& filter, size_t row_stride, size_t col_stride, bool is_colmajor )
 {  
   auto find_c = [&pcd]( const char* c ) -> const sensor_msgs::msg::PointField&
   {
@@ -47,7 +47,7 @@ std::vector<coord_t> coord_from_pcd( const sensor_msgs::msg::PointCloud2& pcd, c
   auto field_z = find_c("z");
 
   auto point_step = pcd.point_step;
-  auto total = pcd.height * pcd.width;
+  auto total = pcd.height * pcd.width * pcd.point_step;
 
   assert( !pcd.is_bigendian );                                          // who cares
   assert( field_x.datatype == sensor_msgs::msg::PointField::FLOAT32 );  // who cares
@@ -55,17 +55,39 @@ std::vector<coord_t> coord_from_pcd( const sensor_msgs::msg::PointCloud2& pcd, c
   assert( field_z.datatype == sensor_msgs::msg::PointField::FLOAT32 );  // who cares
   
   std::vector<coord_t> coords;
-  coords.reserve( total );
 
-  for ( auto dptr = pcd.data.data(); dptr < pcd.data.data() + total * point_step; dptr += point_step )
+  size_t inner_step, inner_stride;
+  size_t outer_step, outer_stride;
+
+  if ( is_colmajor )
   {
-    float x = *reinterpret_cast<const float*>(dptr + field_x.offset);
-    float y = *reinterpret_cast<const float*>(dptr + field_y.offset);
-    float z = *reinterpret_cast<const float*>(dptr + field_z.offset);
-    coord_t c { x, y, z };
-    if ( filter.within(c) ) 
+    inner_stride = row_stride;
+    outer_stride = col_stride;
+
+    inner_step = point_step;
+    outer_step = pcd.height * inner_step;
+  }
+  else
+  {
+    inner_stride = col_stride;
+    outer_stride = row_stride;
+
+    inner_step = point_step;
+    outer_step = pcd.width * inner_step;
+  }
+
+  for ( auto outer = pcd.data.data(); outer < pcd.data.data() + total; outer += outer_step * outer_stride )
+  {
+    for ( auto inner = outer; inner < outer + outer_step; inner += inner_step * inner_stride )
     {
-      coords.push_back( c );
+      float x = *reinterpret_cast<const float*>(inner + field_x.offset);
+      float y = *reinterpret_cast<const float*>(inner + field_y.offset);
+      float z = *reinterpret_cast<const float*>(inner + field_z.offset);
+      coord_t c { x, y, z };
+      if ( filter.within(c) ) 
+      {
+        coords.push_back( c );
+      }
     }
   }
 
@@ -313,6 +335,11 @@ void MutablePointCloud2::remove( size_t index )
   m_transforms_last.erase(index);
 }
 
+void MutablePointCloud2::replace_frame( const std::string& parent )
+{
+  m_msg->header.frame_id = parent;
+}
+
 void MutablePointCloud2::reinsert( size_t index, const std::vector<coord_t>& points, const pose_t& pose, const std::vector<double>& colors )
 {
   auto& [start, stop] = m_index_map_points[index];
@@ -390,7 +417,13 @@ void VoxelMapVisualizer::update_points()
 
   for ( auto& record : m_map->get_all() )
   {
-    m_scolors.push_back( m_map->params().quantizer->color_mono( record.similarities ) );
+    auto color = m_map->params().quantizer->color_mono( record.similarities );
+    if ( record.similarities.hasNaN() )
+    {
+      std::cerr << "record has NaN: " << record.similarities.transpose() << "\n";
+      color = 1.0;
+    }
+    m_scolors.push_back( color );
     m_spoints.push_back( m_map->tree_params().xkey_to_coord_leaf( record.xkey ) );
   }
 }

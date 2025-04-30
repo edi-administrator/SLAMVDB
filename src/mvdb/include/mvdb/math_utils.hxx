@@ -1,11 +1,11 @@
 #pragma once
 
-#include <iostream>
 #include <Eigen/Dense>
 #include <memory>
 #include <numeric>
 #include <map>
 #include <optional>
+#include <exception>
 #include "typedefs.hxx"
 
 namespace mvdb
@@ -53,7 +53,13 @@ inline Eigen::Vector<scalar, cols> cosine_similarity( const Eigen::Vector<scalar
   return ( ref.colwise().normalized().transpose() * v.normalized() );
 }
 
-
+static void value_assert( bool expression_result, const std::string& msg )
+{
+  if ( !expression_result )
+  {
+    throw std::runtime_error( msg.c_str() );
+  }
+}
 
 class SpatialConstraint
 {
@@ -63,8 +69,17 @@ class SpatialConstraint
     virtual bool within( const coord_t& c ) const { return within( vec_from_coord(c) ); }
     virtual bool outside( const vec_t& v ) const { return !within(v); }
     virtual bool outside( const coord_t& c) const { return !within(c); }
+
     template<typename T>
-    std::vector<size_t> get_within( const std::vector<T>& ) const; 
+    inline std::vector<T> get_within( const std::vector<T>& coords ) const
+    {
+      std::vector<T> elements;
+      for ( auto& coord : coords )
+      {
+        if ( within( coord ) ) elements.push_back( coord );
+      }
+      return elements;
+    }
 
 };
 
@@ -97,11 +112,11 @@ class CollectionConstraint : public SpatialConstraint
     inline bool within( const vec_t& v ) const override 
     {
       auto _lambda_and = [&v]( bool current, const std::shared_ptr<SpatialConstraint>& constr ) -> bool
-      { 
+      {
         return current && constr->within(v);
       };
       auto _lambda_or = [&v]( bool current, const std::shared_ptr<SpatialConstraint>& constr ) -> bool
-      { 
+      {
         return current || constr->within(v);
       };
       
@@ -184,12 +199,6 @@ class PlaneConstraint : public PlanarConstraint
     ~PlaneConstraint() = default;
     static PlaneConstraint between( const vec_t& a, const vec_t& b, double t );
     PlaneConstraint inverse() const { return PlaneConstraint( m_centers[0], -m_normals[0] ); }
-
-    friend std::ostream& operator<<( std::ostream& o, const PlaneConstraint& p ) 
-    { 
-      o << "PlaneConstraint( " << "c=(" << p.m_centers[0].transpose() << "); n=(" << p.m_normals[0].transpose() << "); )";
-      return o;
-    }
 };
 
 class FrustumConstraint : public PlanarConstraint
@@ -221,6 +230,75 @@ class FrustumConstraint : public PlanarConstraint
     };
 };
 
+
+class AzimuthConstraintInclude : public SpatialConstraint
+{
+  public:
+    ~AzimuthConstraintInclude() = default;
+    AzimuthConstraintInclude( double phi_start, double phi_end ) : m_phi_end(phi_end), m_phi_start(phi_start)
+    {
+      
+      value_assert( -k_pi <= phi_start && k_pi >= phi_start, "phi_start " + std::to_string(phi_start) +  " not in range!" );
+      value_assert( -k_pi <= phi_end && k_pi >= phi_end, "phi_start " + std::to_string(phi_end) +  " not in range!" );
+
+      m_reversed = phi_start > phi_end;
+
+      if ( m_reversed )
+      {
+        m_phi_end += 2 * k_pi;
+        m_phi_end = fmod( m_phi_end, 2 * k_pi );
+      }
+
+    }
+    
+    inline bool within( const vec_t& v ) const override
+    {
+      auto phi = atan2( v.y(), v.x() );
+
+      if ( m_reversed )
+      {
+        phi += 2 * k_pi;
+        phi = fmod( phi, 2 * k_pi );
+      }
+
+      return phi > m_phi_start && phi < m_phi_end;
+    }
+  
+  protected:
+    double m_phi_start, m_phi_end;
+    bool m_reversed = false;
+};
+
+
+class PointCropConstriant : public SpatialConstraint
+{
+  public:
+    ~PointCropConstriant() = default;
+    PointCropConstriant( vec_t::Scalar radius, vec_t::Scalar theta_start, vec_t::Scalar theta_end )
+    : m_radius( vec_t::Zero(), radius )
+    {
+      if ( theta_end != theta_start )
+      {
+        m_angle = std::make_unique<AzimuthConstraintInclude>( theta_start, theta_end );
+      }
+    }
+
+    inline bool within( const vec_t& v ) const override
+    {
+      auto result = m_radius.within(v);
+      if ( m_angle )
+      {
+        result &= m_angle->within(v);
+      }
+      return result;
+    }
+
+  
+  protected:
+    OuterSphericalConstraint m_radius;
+    std::unique_ptr<AzimuthConstraintInclude> m_angle = nullptr;
+
+};
 
 class TimeInterval
 {
@@ -292,17 +370,6 @@ class DisjointIntervalLookup
         m_stop.erase(interval.stop());
       }
       return opt_out;
-    }
-
-    inline void print_intervals()
-    {
-      std::cerr << "all intervals\n";
-      auto start_it = m_start.begin();
-      auto stop_it = m_stop.begin();
-      while( start_it != m_start.end() && stop_it != m_stop.end() )
-      {
-        std::cerr << "[" + std::to_string( start_it++->first ) + ", " + std::to_string( stop_it++->first ) + "]\n";
-      }
     }
 
     protected:

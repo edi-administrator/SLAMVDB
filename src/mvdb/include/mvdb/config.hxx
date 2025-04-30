@@ -13,12 +13,24 @@
 namespace mvdb
 {
 
+
+struct StaticMapParams
+{
+  std::string points_path = "./static_map_data/points";
+  std::string poses_path = "./static_map_data/poses";
+  OctreeParams tree_params = OctreeParams();
+};
+
+std::string read_raw_file( const std::string& path );
+std::string get_pkg_share( const std::string& path );
+
 class ConfigReader
 {
   public:
 
     ConfigReader( const std::string& root = std::filesystem::current_path() );
 
+    ScanBufferParams get_scan_buffer_defaults() const;
     ProjectionParams get_projection_defaults() const;
     LocalMapperParams get_local_mapper_defaults() const;
     GlobalMapperParams get_global_mapper_defaults() const;
@@ -26,6 +38,7 @@ class ConfigReader
     GlobalVoxelMapParams get_global_voxel_defaults() const;
     QuantizerParams get_quantizer_defaults() const;
     PoseBufferParams get_pose_buffer_params( const std::string& mode = "tracker" ) const;
+    StaticMapParams get_static_map_params() const;
   
   protected:
     std::map<std::string, std::string> m_default;

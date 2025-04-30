@@ -22,7 +22,13 @@ builtin_interfaces::msg::Time ns_to_stamp( size_t timestamp_ns );
 
 std_msgs::msg::Header ns_to_header( size_t timestamp_ns );
 
-std::vector<coord_t> coord_from_pcd( const sensor_msgs::msg::PointCloud2& pcd, const SpatialConstraint& filter = IdentityConstraint() );
+std::vector<coord_t> coord_from_pcd( 
+  const sensor_msgs::msg::PointCloud2& pcd, 
+  const SpatialConstraint& filter = IdentityConstraint(),  
+  size_t row_stride = 1, 
+  size_t col_stride = 1, 
+  bool is_colmajor = false 
+);
 
 // sensor_msgs::msg::PointCloud2 pcd_from_coord( const std::vector<coord_t>& pts, size_t ns = 0, const std::string& parent = "world", const std::vector<double> occ = {} );
 sensor_msgs::msg::PointCloud2 pcd_from_coord( const std::vector<coord_t>& pts, const std::string& parent = "world", bool use_color = false, const std::vector<double> occ = {} );
@@ -48,6 +54,7 @@ class MutablePointCloud2
     void update_pose( size_t index, const pose_t& pose );
     void reinsert( size_t index, const std::vector<coord_t>& points, const pose_t& pose, const std::vector<double>& color = {} );
     void remove( size_t index );
+    void replace_frame( const std::string& parent );
 
     inline const sensor_msgs::msg::PointCloud2 msg() const { return *m_msg; }
     inline bool has_idx( size_t idx ) const { return m_index_map_points.find(idx) != m_index_map_points.end(); }

@@ -20,7 +20,7 @@ Quantizer::Quantizer( const QuantizerParams& params )
   }
 
   m_colors_mono = decltype(m_colors_mono) {
-    0.99, // asphalt
+    0.95, // asphalt
     0.1, // building
     0.3, // bush
     0.75, // dirt

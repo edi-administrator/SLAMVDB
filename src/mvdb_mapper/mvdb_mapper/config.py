@@ -1,11 +1,12 @@
-from mvdb_py.config import ConfigBase
+from mvdb_py.config import ConfigPCD
 
-class Config(ConfigBase):
+class Config(ConfigPCD):
 
     def __init__(self, package_name = "mvdb_mapper"):
         super().__init__(package_name=package_name)
 
     def instance_defaults(self):
+        super().instance_defaults()
         self.MAPPER_PUBLISH_MAXCOUNT: int = 1000
         self.MAPPER_NODE_NAME: str = "mapper_node"
         self.INPUT_POINTS_TOPIC: str = "/points"
@@ -19,7 +20,6 @@ class Config(ConfigBase):
         self.MAPPER_SUBMAP_THRESH: float = 4.0
         self.MAPPER_LOOP_MIN_DIST: float = 30.0
         self.ICP_MAX_CORR_DIST: float = 1.0
-        self.CROP_RADIUS: float = 1.5
         self.SCD_THETA_R: float = 120
         self.SCD_R_R: float = 40
         self.SCD_R_SCALE: float = 0.5
@@ -28,3 +28,6 @@ class Config(ConfigBase):
         self.SCD_SIM_THRESH: float = 0.30
         self.DUMP_POSES: bool = False
         self.DUMP_LOOPS: bool = False
+        self.MAP_FILE_POINTS_IN: str = "./tracker_input"
+        self.MAP_FILE_POSES_IN: str = "./traker_input"
+        self.MAP_FILE_POSES_OUT: str = "./mapper_output"

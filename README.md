@@ -19,6 +19,12 @@ Included packages:
 * *mvdb_mapper* - simple loop closing node written in Python using Open3D, with odometry and *ScanContext* based correspondence detection. **Note:** We provide our own implementation of the rotational version of *ScanContext* here, as a general policy of avoiding external dependencies wherever possible. TODO: GNSS constraints
 * *langseg* - a fork of [LangSeg](https://github.com/isl-org/lang-seg/tree/65c0a0978fa2e562cda695afed1554c63ec35cb) with only the code relevant in image segmentation inference retained. TODO: refactor into proper ROS2 package, clean up the implementation.
 
+### Example map output
+
+![Example map](doc/map.png)
+
+The system produces a large-scale voxel grid map with open-set semantic vector values, and can be provided with a (currently - compile time sized) set of discrete pre-computed similarity classes, in this case for terrain segmentation. However, using the "search" service it is possible to retrieve points using arbitrary semantic query vectors.
+
 
 ## License
 The code directly contained in this repository is distributed under an Apache v2.0 license. On a per-package basis:
@@ -53,6 +59,20 @@ For verbose builds and debugging, run. Configuration params selected for decent 
 ```{bash}
 colcon build --event-handlers console_cohesion+ --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo
 ```
+
+To make WITHOUT OpenGL support (and reset the cached USE_OPENGL flag that CMake makes):
+
+```{bash}
+colcon build --event-handlers console_cohesion+ --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo -U USE_OPENGL -DUSE_OPENGL=OFF
+```
+
+To make WITH OpenGL support (and reset the cached USE_OPENGL flag that CMake makes):
+
+```{bash}
+colcon build --event-handlers console_cohesion+ --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo -U USE_OPENGL -DUSE_OPENGL=ON
+```
+
+
 
 ## Run
 

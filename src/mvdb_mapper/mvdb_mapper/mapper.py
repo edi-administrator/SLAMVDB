@@ -4,7 +4,7 @@ from g2o import g2opy
 from dataclasses import dataclass
 from rclpy.impl.rcutils_logger import RcutilsLogger
 from typing import List, Tuple, Generator
-from mvdb_py.utils import pcd_to_points, delta_t
+from mvdb_py.utils import pcd_to_points, delta_t_norm
 from .scd import SCD
 from .config import Config
 
@@ -86,8 +86,8 @@ class Mapper():
             T_last = self.submap_list[-1].tracker_pose
             stamp_last = self.submap_list[-1].timestamp
 
-            if ( timestamp > stamp_last and delta_t(T_last, tracker_pose) > self.config.MAPPER_SUBMAP_THRESH ):
-                track_distance = self.submap_list[-1].track_distance + delta_t(T_last, tracker_pose)
+            if ( timestamp > stamp_last and delta_t_norm(T_last, tracker_pose) > self.config.MAPPER_SUBMAP_THRESH ):
+                track_distance = self.submap_list[-1].track_distance + delta_t_norm(T_last, tracker_pose)
                 submap = Submap(count, timestamp, tracker_pose, tracker_pose, scan, track_distance)
                 self.update_submaps_and_find_loops(submap)
     

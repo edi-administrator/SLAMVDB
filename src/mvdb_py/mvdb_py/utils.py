@@ -1,7 +1,7 @@
 import numpy as np
 import open3d as o3d
-from typing import Tuple
-from scipy.spatial.transform import Rotation
+from typing import Tuple, List, Any, SupportsFloat
+from scipy.spatial.transform import Rotation, Slerp
 from builtin_interfaces.msg import Time
 from sensor_msgs.msg import PointCloud2, PointField
 from geometry_msgs.msg import TransformStamped
@@ -19,7 +19,13 @@ def delta_T(T_a: np.ndarray, T_b: np.ndarray) -> np.ndarray:
     return np.linalg.inv(T_a) @ T_b
 
 def delta_t(T_a: np.ndarray, T_b: np.ndarray) -> np.ndarray:
-    return np.linalg.norm(delta_T(T_a, T_b)[:3,3])
+    return delta_T(T_a, T_b)[:3,3]
+
+def delta_t_norm(T_a: np.ndarray, T_b: np.ndarray) -> np.ndarray:
+    return np.linalg.norm(delta_t(T_a, T_b))
+
+def normalized(v: np.ndarray) -> np.ndarray:
+    return v / ( np.linalg.norm(v) + np.finfo(float).eps )
 
 def pointcloud_to_np(msg: PointCloud2) -> Tuple[np.ndarray, np.ndarray]:
     '''
@@ -80,6 +86,25 @@ def pcd_to_points(pcd: o3d.geometry.PointCloud, ds = None) -> np.ndarray:
     if not ds is None:
         pcd = pcd.voxel_down_sample(ds)
     return np.asarray(pcd.points)
+
+def points_to_pcd(points: np.ndarray, colors: np.ndarray | None = None, crop_radius: float | None = 1.5) -> o3d.geometry.PointCloud:
+    
+    if not crop_radius is None:
+
+        mask = np.linalg.norm(points, axis=-1) > crop_radius
+
+        points = points[mask]
+        
+        if not colors is None:
+            colors = colors[mask]
+
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(points)
+
+    if not colors is None:
+        pcd.colors = o3d.utility.Vector3dVector(colors)
+
+    return pcd
 
 def pcd_to_pointcloud(pcd: o3d.geometry.PointCloud, color: bool = False) -> PointCloud2:
 
@@ -153,3 +178,88 @@ def dump_pts(path: str, pts: o3d.geometry.PointCloud):
 
 def main():
     print(f"package reachable!")
+
+class Linterp:
+
+    def __init__(self, values: List[np.ndarray], stamps: List[SupportsFloat]):
+        self.values = [v.copy() for v in values]
+        self.times = np.array([self.sec(t) for t in stamps])
+        self.indices = np.arange(len(self.values))
+    
+    @staticmethod
+    def sec(stamp_ns: int):
+        return float(stamp_ns) / 1e9
+    
+    def in_bounds(self, t):
+        return self.times[0] <= self.sec(t) <= self.times[-1]
+
+    def bounds(self):
+        return self.times[0], self.times[-1]
+    
+    def interpolate(self, t):
+        
+        t_s = self.sec(t)
+
+        lbound = self.indices[(self.times <= t_s)][-1]
+        ubound = self.indices[(self.times >= t_s)][0]
+
+        if lbound == ubound:
+            return self.values[lbound]
+
+        coeff = ( t_s - self.times[lbound] ) / ( self.times[ubound] - self.times[lbound] + np.finfo(float).eps )
+
+        return ( 1 - coeff ) * self.values[lbound] + coeff * self.values[ubound]
+
+
+class SE3Interpolate:
+
+    def __init__(self, stamps: List[int], poses: List[np.ndarray]):
+        
+        assert(all(x.shape == (4,4) for x in poses))
+
+        ts = [T[:3,3] for T in poses]
+        self.t_interp = Linterp(ts, stamps)
+
+        Rs = Rotation.from_matrix([T[:3,:3] for T in poses])
+        self.slerp = Slerp(stamps, Rs)
+
+    def in_bounds(self, t: int):
+        return self.t_interp.in_bounds(t)
+    
+    def interpolate(self, t: int):
+        
+        if not self.t_interp.in_bounds(t):
+            raise ArithmeticError(f"Tried to interpolate out of bounds! lbound = {self.t_interp.bounds()[0]} t = {self.t_interp.sec(t)} ubound = {self.t_interp.bounds()[-1]}")
+
+        T = np.identity(4)
+        T[:3,:3] = self.slerp(t).as_matrix()
+        T[:3,3] = self.t_interp.interpolate(t)
+        
+        return T
+
+def _pose_cloud(scale: float = 1.0, count: float = 10.):
+
+    points = []
+    colors = []
+
+    for axis in range(3):
+        for da in range(int(count)):
+            pt = np.zeros(3)
+            cl = np.zeros(3)
+            cl[axis] = 1.0
+            pt[axis] = da
+            points.append(pt * scale / count)
+            colors.append(cl)
+    
+    return np.stack(points), np.stack(colors)
+
+class PoseMarker:
+
+    def __init__(self, scale = 1.0, count = 10.0):
+        points, colors = _pose_cloud(scale, count)
+        self._cloud = points_to_pcd(points, colors, crop_radius=None)
+    
+    def at(self, pose: np.ndarray):
+        out = o3d.geometry.PointCloud(self._cloud)
+        out.transform(pose)
+        return out

@@ -7,6 +7,8 @@
 #include <omp.h>
 #include <chrono>
 
+#include <unordered_set>
+
 namespace mvdb
 {
 
@@ -99,7 +101,8 @@ std::string str( const coord_t& coord )
   ss << "[";
   for ( auto i = 0; i < coord.size(); i++ )
   {
-    ss << std::setfill('0') << std::setw(6) << std::fixed << std::setprecision(4) <<  coord[i];
+    // ss << std::setfill('0') << std::setw(6) << std::fixed << std::setprecision(4) <<  coord[i];
+    ss <<  coord[i];
     if ( i < coord.size() - 1 ) ss << " ";
   }
   ss << "]";
@@ -160,41 +163,28 @@ size_t ockey_to_index( size_t depth, const ockey_t& key, size_t maxdepth )
   return idx;
 }
 
-size_t last_same_parent_depth( const ockey_t& a, const ockey_t& b, size_t max_depth )
-{
-  auto iidx_a = ockey_to_xkey(a, max_depth);
-  auto iidx_b = ockey_to_xkey(b, max_depth);
-  auto diff = iidx_a ^ iidx_b;
-  auto shift = floor( floor( log2( double(diff) ) ) / 3 );
-  return max_depth - shift - 2;
-}
-
 xkey_t ockey_to_xkey( const ockey_t& key, size_t max_depth )
 {
-  std::bitset<64> out {};
-  for ( size_t i = 0; i < key.size(); i++ )
-  {
-    for ( size_t j = 0; j <= max_depth; j++ )
-    {
-      out[j*key.size() + i] = ( key[i] & ( 1 << j ) ) ? 1 : 0;
-    }
-  }
-  return out.to_ullong();
+  size_t mask_x = int( pow( 2, max_depth + 1) - 1 ); // 11111...111 max_depth times
+  
+  size_t out_ = size_t(0);
+  out_ ^= ( mask_x & key[2] );
+  out_ ^= ( mask_x & key[1] ) << max_depth + 1;
+  out_ ^= ( mask_x & key[0] ) << (max_depth + 1) * 2;
+
+  return out_;
 }
 
 ockey_t xkey_to_ockey( xkey_t ikey, size_t max_depth )
 {
   ockey_t key {};
-  std::bitset<64> bits (ikey);
-  for ( size_t i = 0; i < key.size(); i++ )
-  {
-    std::bitset<64> out {};
-    for ( size_t j = 0; j <= max_depth; j++ )
-    {
-      out[j] = bits[j*key.size()+i];
-    }
-    key[i] = out.to_ulong();
-  }
+  size_t mask_x = int( pow( 2, max_depth + 1 ) - 1 ); // 11111...111 max_depth times
+  
+  size_t out_ = size_t(0);
+  key[2] = ( mask_x & ikey );
+  key[1] = ( mask_x & ikey >> max_depth + 1 );
+  key[0] = ( mask_x & ikey >> (max_depth + 1)* 2 );
+
   return key;
 }
 
@@ -466,10 +456,12 @@ std::vector<ockey_t> Octree::fill_keys( const std::vector<coord_t>& points )
 std::vector<ockey_t> Octree::miss_keys( const coord_t& ray_origin, const std::vector<coord_t>& points )
 {
   std::vector<ockey_t> miss_keys;
+  std::unordered_set<xkey_t> _miss_xkeys;
 
   #pragma omp parallel
   {
     std::list<ockey_t> _miss_keys_l;
+    std::unordered_set<xkey_t> _miss_keys_s;
     auto thread_idx = omp_get_thread_num();
     auto n_threads = omp_get_num_threads();
 
@@ -480,14 +472,23 @@ std::vector<ockey_t> Octree::miss_keys( const coord_t& ray_origin, const std::ve
       auto ray = key_rays( ray_origin, points[i], m_res, m_maxdepth - 1 - m_raycast_downsample, m_maxdepth, m_params.clear_dist );
       for ( auto& k : ray )
       {
-        _miss_keys_l.push_back( k );
+        // _miss_keys_l.push_back( k );
+        _miss_keys_s.insert( m_params.ockey_to_xkey( k ) );
       }
     }
 
     #pragma omp critical
     {
-      miss_keys.insert(miss_keys.begin(), _miss_keys_l.begin(), _miss_keys_l.end());
+      // miss_keys.insert(miss_keys.begin(), _miss_keys_l.begin(), _miss_keys_l.end());
+      // _miss_xkeys.insert(_miss_xkeys.begin(), _miss_keys_s.begin(), _miss_keys_s.end());
+      _miss_xkeys.insert( _miss_keys_s.begin(), _miss_keys_s.end() );
+
     }
+  }
+
+  for ( auto& xk : _miss_xkeys )
+  {
+    miss_keys.push_back( m_params.xkey_to_ockey( xk ) );
   }
 
   return miss_keys;
@@ -515,12 +516,21 @@ void Octree::insert_scan( const std::vector<coord_t>& points, const coord_t& sen
 
   auto fkeys = fill_keys(points);
   new_update();
-  find_traverse(fkeys, fill_cb, m_maxdepth);
+  find_traverse( fkeys, fill_cb, m_maxdepth );
 
   if ( occlusion )
   {
     auto mkeys = miss_keys(sensor_origin, points);
-    std::cerr << "MISS KEYS COUNT = " << mkeys.size() << "\n";
+    if ( mkeys.size() == 0 )
+    {
+      std::cerr << "MISS KEYS COUNT = " << mkeys.size() << "\n";
+      std::cerr << "origin: " << str(sensor_origin) << "\n";
+      std::cerr << "some points: " << "\n";
+      for ( auto i = 0; i < points.size() && i < 5; i++ )
+      {
+        std::cerr << "point:" << str(points[i]) << "\n";
+      } 
+    }
     find_traverse( mkeys, clear_cb, m_maxdepth - m_raycast_downsample );
     traverse(prune_cb);  
   }

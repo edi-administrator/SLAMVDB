@@ -87,9 +87,13 @@ class ThreadsafeStampMap
     std::map<size_t, T_value>
     pull_range( size_t start, size_t stop );
 
+    std::pair<size_t, size_t> get_limits();
+
     void put( size_t key, const T_value& value );
 
     void put_all( const std::map<size_t, T_value>& other );
+
+    void trim_to_size( size_t max_size, size_t scaler = 2 );
 
     std::map<size_t, T_value> get_all_copy() const;
 
@@ -108,7 +112,9 @@ struct ImageBufferParams
 {
   std::string node_name = "image_buffer";
   std::string topic = "/camera_left/image_raw";
-  std::string service_path = "/segmentation";
+  // std::string service_path = "/segmentation";
+  std::string service_path = "/segmented_images";
+  size_t max_size = 15;
   rclcpp::NodeOptions node_options = rclcpp::NodeOptions {};
 };
 
@@ -147,6 +153,26 @@ class ImageBuffer : public rclcpp::Node
 
 };
 
+class ImageSubBuffer : public rclcpp::Node
+{
+  public:
+
+    ImageSubBuffer( const ImageBufferParams& params = {} );
+    void image_cb(mvdb_interface::msg::VectorImage::UniquePtr img );
+    std::map<size_t, std::shared_ptr<std::vector<sem_t>>> get_up_to( size_t timestamp_ns );
+    std::tuple<size_t,size_t,size_t> h_w_c( size_t timestamp_ns );
+
+  protected:
+
+    ImageBufferParams m_params;
+
+    rclcpp::Subscription<mvdb_interface::msg::VectorImage>::SharedPtr m_image_sub;
+
+    ThreadsafeStampMap<std::shared_ptr<std::vector<sem_t>>> m_stamped_vimg;
+    ThreadsafeStampMap<std::tuple<size_t,size_t,size_t>> m_stamped_sizes;
+
+};
+
 struct PoseBufferParams
 {
   std::string node_name = "tracker_pose_buffer";
@@ -162,6 +188,7 @@ class PoseBuffer : public rclcpp::Node
     void load_from_dir( const std::string& path = "refactor_test_data", const std::string& ext = ".csv");
     void transform_cb( geometry_msgs::msg::TransformStamped::UniquePtr transform_stamped );
     pose_t pose_at( size_t timestamp_ns );
+    bool in_range( size_t timestamp_ns );
     std::pair<size_t, pose_t> latest_at( size_t timestamp_ns );
 
     std::vector<pose_t> get_all();
@@ -183,6 +210,12 @@ struct ScanBufferParams
   std::string node_name = "scan_buffer_node";
   std::string topic = "/points";
   rclcpp::NodeOptions node_options = rclcpp::NodeOptions {};
+  double exclusion_radius = 1.5;
+  double exclusion_phi_start = 0;
+  double exclusion_phi_end = 0;
+  size_t row_step = 1;
+  size_t col_step = 1;
+  bool is_colmajor = false;
 };
 
 class ScanBuffer : public rclcpp::Node
@@ -195,9 +228,11 @@ class ScanBuffer : public rclcpp::Node
     std::map<size_t, std::vector<coord_t>> get_up_to( size_t timestamp_ns );
 
   protected:
+    std::unique_ptr<SpatialConstraint> m_constraint;
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr m_lidar_sub;
     ThreadsafeStampMap<std::vector<coord_t>> m_stamped_pts_;
     std::atomic<size_t> m_last_stamp = 0;
+    ScanBufferParams m_params;
 };
 
 

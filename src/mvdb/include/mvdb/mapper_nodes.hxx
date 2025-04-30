@@ -40,10 +40,15 @@ struct GlobalMapperParams
   std::shared_ptr<PoseBuffer> pbuf = nullptr;
   std::shared_ptr<PoseBuffer> tbuf = nullptr;
   rclcpp::NodeOptions opt = rclcpp::NodeOptions();
-  ProjectionParams projection_params = ProjectionParams {};
+  std::shared_ptr<IProjector> projector = nullptr;
   OctreeParams tree_params = OctreeParams { .maxdepth = 8, .res = 64 };
   LocalVoxelLookupParams lookup_params = LocalVoxelLookupParams { .tree_params = OctreeParams { .maxdepth = 16, .res = .25 } };
   GlobalVoxelMapParams global_vox_params = GlobalVoxelMapParams {};
+  int planar_map_extent_x = 512;
+  int planar_map_extent_y = 512;
+  std::string gravity_topic = "/gravity_pose";
+  std::string floating_frame = "mapper_frame";
+  std::string gravity_frame = "gravity_aligned";
 };
 
 class GlobalMapper : public rclcpp::Node
@@ -66,6 +71,7 @@ class GlobalMapper : public rclcpp::Node
     void timer_cb_single();
     void timer_cb_correction();
     void loop_cb( mvdb_interface::msg::LoopMessage::UniquePtr msg );
+    void grav_cb( geometry_msgs::msg::TransformStamped::UniquePtr msg );
     void render_submap( sbmp_t sbmp, bool insert = false );
 
     void semantic_cb( const std::shared_ptr<semantic_srv_t::Request> req, std::shared_ptr<semantic_srv_t::Response> resp );
@@ -80,6 +86,8 @@ class GlobalMapper : public rclcpp::Node
   protected:
 
     pose_t _extrapolate_pose_at( size_t timestamp_ns );
+    pose_t m_T_gravity_mapper = pose_t::Identity();
+    std::string m_active_frame;
 
     std::shared_ptr<PoseBuffer> m_pbuf, m_ptbuf;
     MutablePointCloud2 m_pcd;
@@ -90,14 +98,17 @@ class GlobalMapper : public rclcpp::Node
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr m_sem_pub;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr m_grid_pub;
     rclcpp::Subscription<mvdb_interface::msg::LoopMessage>::SharedPtr m_loop_sub;
+    rclcpp::Subscription<geometry_msgs::msg::TransformStamped>::SharedPtr m_grav_sub;
 
     OctreeParams m_tree_params;
-    ProjectionParams m_projection_params;
+    std::shared_ptr<IProjector> m_projector;
+    GlobalMapperParams m_params;
 
-    mutable std::mutex m_mutex_maps, m_mutex_queue, m_mutex_loops;
+    mutable std::mutex m_mutex_maps, m_mutex_queue, m_mutex_loops, m_mutex_grav;
     std::queue<std::tuple<sbmp_t, pmap_t, smap_t>> m_queue;
     std::queue<std::tuple<size_t, size_t, pose_t>> m_loops;
     std::atomic<size_t> m_last_loop, m_last_map_end;
+    std::atomic<bool> m_grav_is_set = false;
 
     rclcpp::TimerBase::SharedPtr m_background_timer_once;
     rclcpp::TimerBase::SharedPtr m_background_timer_corrections;
@@ -123,17 +134,19 @@ class GlobalMapper : public rclcpp::Node
 
 struct LocalMapperParams
 {
-  std::shared_ptr<ImageBuffer> ibuf = nullptr;
+  // std::shared_ptr<ImageBuffer> ibuf = nullptr;
+  std::shared_ptr<ImageSubBuffer> ibuf = nullptr;
   std::shared_ptr<PoseBuffer> pbuf = nullptr;
   std::shared_ptr<ScanBuffer> sbuf = nullptr;
   std::shared_ptr<GlobalMapper> gmap = nullptr;
   std::function<bool(const std::vector<pose_t>&)> split_condition = default_split_condition;
   std::function<size_t(const std::vector<pose_t>&)> split_point = default_split_point;
-  ProjectionParams projection_params = ProjectionParams {};
+  std::shared_ptr<IProjector> projector = nullptr;
   OctreeParams tree_params = OctreeParams { .res=.25, .downsample=0 };
   rclcpp::NodeOptions opt = rclcpp::NodeOptions {};
   bool use_quantizer = false;
   std::shared_ptr<Quantizer> quantizer = nullptr;
+  size_t process_n_images = 10;
 };
 
 class LocalMapper : public rclcpp::Node
@@ -157,8 +170,9 @@ class LocalMapper : public rclcpp::Node
     std::map<size_t, std::shared_ptr<std::vector<sem_t>>> m_unused_images;
     std::map<size_t, pose_t> m_unused_poses;
 
-    ProjectionParams m_proj_params;
+    std::shared_ptr<IProjector> m_projector;
 
+    size_t m_process_n_images;
     size_t m_ns_last;
     size_t m_ns_period;
     size_t m_ns_last_split;
@@ -166,7 +180,8 @@ class LocalMapper : public rclcpp::Node
     // Submap m_sbmp;
     std::shared_ptr<Submap> m_sbmp;
 
-    std::shared_ptr<ImageBuffer> m_ibuf;
+    // std::shared_ptr<ImageBuffer> m_ibuf;
+    std::shared_ptr<ImageSubBuffer> m_ibuf;
     std::shared_ptr<PoseBuffer> m_pbuf;
     std::shared_ptr<ScanBuffer> m_sbuf;
     std::shared_ptr<GlobalMapper> m_gmap;

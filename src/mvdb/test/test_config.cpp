@@ -5,7 +5,6 @@ TEST(test_config, load)
 {
   using namespace mvdb;
   
-  std::cerr << " come on give me a fucking breakpoint \n";
   auto current = std::filesystem::current_path();
   auto target = current / "../../src/mvdb/";
   ConfigReader cr { "/mnt/media/user/repos/lidar_vector_slam_refactor/" };

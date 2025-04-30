@@ -5,7 +5,8 @@ from tf2_ros import TransformBroadcaster
 from geometry_msgs.msg import TransformStamped
 from sensor_msgs.msg import PointCloud2
 import numpy as np
-from mvdb_py.utils import pointcloud_to_pcd, matrix_to_transform_msg, stamp_to_int, transform_msg_to_matrix, int_to_stamp, dump_pts
+from mvdb_py.utils import matrix_to_transform_msg, stamp_to_int, transform_msg_to_matrix, int_to_stamp, dump_pts
+from mvdb_py.pointcloud import PointCloudNP
 from mvdb_interface.msg import LoopMessage
 from .config import Config
 from .mapper import Mapper, LoopEdge
@@ -45,7 +46,15 @@ class MapperNode(Node):
 
     def points_sub(self, msg: PointCloud2):
 
-        self.stamp_to_scan[stamp_to_int(msg.header.stamp)] = pointcloud_to_pcd(msg)
+        pcd = PointCloudNP(
+            msg, 
+            row_step=self.config.CROP_ROW_STEP,
+            col_step=self.config.CROP_COL_STEP,
+            col_major=self.config.CROP_COLMAJOR, 
+            field_filter=["x", "y", "z"]
+        ).crop(self.config.CROP_RADIUS).azimuth_range(self.config.CROP_THETA_START, self.config.CROP_THETA_END)
+
+        self.stamp_to_scan[stamp_to_int(msg.header.stamp)] = pcd.o3d()
 
         removable_stamps = []
 

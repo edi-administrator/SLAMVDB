@@ -54,17 +54,20 @@ TEST(octree_test, coord_roundtrip)
     std::cerr << "i=" << i << " "  << str(aaa) << " " << str(bbb) << " " << str(ccc) << "\n";
   }
 
-  std::cerr << "res =  " << 2.0 << "\n";
+
+  double res = 64.0;
+
+  std::cerr << "res =  " << res << "\n";
   coord_t aaaa { 10.625,  3.875, -0.875 };
   for ( auto i = 0; i <= 17; i++ )
   {
-    auto bbbb = coord_to_ockey( i, 64.0, aaaa, 16 );
-    auto cccc = ockey_to_coord( i, 64.0, bbbb, 16 );
+    auto bbbb = coord_to_ockey( i, res, aaaa, 16 );
+    auto cccc = ockey_to_coord( i, res, bbbb, 16 );
     std::cerr << "i=" << i << " "  << str(aaaa) << " " << str(bbbb) << " " << str(cccc) << "\n";
   }
 
-  std::cerr << "res =  " << 2.0 << "\n";
-  OctreeParams p { .maxdepth = 4, .res=64.0  };
+  std::cerr << "res =  " << res << "\n";
+  OctreeParams p { .maxdepth = 4, .res=res  };
   for ( auto i = 0; i <= 17; i++ )
   {
     auto bbbb = p.coord_to_ockey( i, aaaa );
@@ -72,10 +75,10 @@ TEST(octree_test, coord_roundtrip)
     std::cerr << "i=" << i << " "  << str(aaaa) << " " << str(bbbb) << " " << str(cccc) << "\n";
   }
 
-  std::cerr << "res =  " << 2.0 << "\n";
+  std::cerr << "res =  " << res << "\n";
   for ( auto i = 0; i <= 17; i++ )
   {
-    OctreeParams pp { .maxdepth = size_t(i+1), .res=64.0  };
+    OctreeParams pp { .maxdepth = size_t(i+1), .res=res  };
     auto bbbb = pp.coord_to_ockey_leaf( aaaa );
     auto cccc = pp.ockey_to_coord_leaf( bbbb );
     std::cerr << "maxd=" << i+1 << " "  << str(aaaa) << " " << str(bbbb) << " " << str(cccc) << "\n";
@@ -124,6 +127,16 @@ TEST(octree_test, key_to_int)
   std::cerr << std::setfill('0') << std::bitset<64>(c) << std::endl;
   auto d = xkey_to_ockey( c, 16 );
   std::cerr << str(d) << std::endl;
+  
+  coord_t e { -1.05, 2.1, -4.13 }; 
+
+  OctreeParams p { .res = 0.125 };
+  
+  auto f = p.coord_to_xkey_leaf( e );
+  auto g = p.xkey_to_coord_leaf( f );
+  std::cerr << "e = " << str(e) << '\n';
+  std::cerr << "f = " << f << '\n';
+  std::cerr << "g = " << str(g) << '\n';
 }
 
 TEST(octree_test, insert_roundtrip)
@@ -176,25 +189,6 @@ TEST(octree_test, ray_cast_subsample)
   {
     std::cerr << str( ockey_to_coord(12, 0.125, key, 16) ) << "\n";
   }
-}
-
-TEST(octree_test, parent)
-{
-  auto a = xkey_to_ockey(0b100100100100100101, 16);
-  auto b = xkey_to_ockey(0b100100100100100100, 16);
-  EXPECT_EQ(last_same_parent_depth(a, b, 16), 14);
-  auto c = xkey_to_ockey(0b100100100100110100, 16);
-  auto d = xkey_to_ockey(0b100100100100100100, 16);
-  EXPECT_EQ(last_same_parent_depth(c, d, 16), 13);
-  auto e = xkey_to_ockey(0b100100100000100100, 16);
-  auto f = xkey_to_ockey(0b100100100100100100, 16);
-  EXPECT_EQ(last_same_parent_depth(e, f, 16), 12);
-  auto g = xkey_to_ockey(0b100100100110100100, 16);
-  auto h = xkey_to_ockey(0b100100100100100100, 16);
-  EXPECT_EQ(last_same_parent_depth(g, h, 16), 12);
-  auto i = xkey_to_ockey(0b101100100110100100, 16);
-  auto j = xkey_to_ockey(0b100100100100100100, 16);
-  EXPECT_EQ(last_same_parent_depth(i, j, 16), 9);
 }
 
 TEST(octree_test, logprob)

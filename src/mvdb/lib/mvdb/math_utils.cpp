@@ -1,7 +1,6 @@
 #include "math_utils.hxx"
 #include <tuple>
 #include <exception>
-#include <iostream>
 
 namespace mvdb
 {
@@ -186,17 +185,6 @@ std::vector<coord_t> cloud_bbox( const std::vector<coord_t>& points )
   }
 
   return corners;
-}
-
-template<typename T>
-std::vector<size_t> SpatialConstraint::get_within( const std::vector<T>& coords ) const
-{
-  std::vector<size_t> indices;
-  for ( auto i = 0; i < coords.size(); i++ )
-  {
-    if ( within(coords[i]) ) indices.push_back(i);
-  }
-  return indices;
 }
 
 

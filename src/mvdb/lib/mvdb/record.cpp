@@ -1,5 +1,6 @@
 #include "record.hxx"
 #include <exception>
+#include <bitset>
 
 namespace mvdb
 {
@@ -34,8 +35,10 @@ void Record::merge_weighted( const Record& other, std::shared_ptr<Quantizer> q )
 Record Record::merge_weighted( const Record& a, const Record& b, std::shared_ptr<Quantizer> q )
 {
   Record out {};
+
   out.merge_weighted(a, q);
   out.merge_weighted(b, q);
+  
   return out;
 }
 
@@ -249,16 +252,6 @@ Submap& Submap::insert_new_records(
   return *this;
 }
 
-void Submap::compute_bbox()
-{
-  auto all_coords = filter_coords_xidx();
-  if ( all_coords.size() > 0 )
-  {
-    m_record_corners = cloud_bbox( apply_T( m_Twm, all_coords ) );
-  }
-}
-
-
 void Submap::compute_unique_keys( const OctreeParams& sample_params )
 {
   m_unique_keys.clear();
@@ -271,7 +264,7 @@ void Submap::compute_unique_keys( const OctreeParams& sample_params )
 
 void Submap::clear_by_keys( const std::list<xkey_t>& cleared_keys )
 {
-  std::cerr << "SUBMAP: cleared_keys.size() = " << cleared_keys.size() << "\n";
+  // std::cerr << "SUBMAP: cleared_keys.size() = " << cleared_keys.size() << "\n";
   for ( auto& ck : cleared_keys )
   {
     auto clear_uid = m_xidx.remove(ck);
@@ -412,7 +405,8 @@ std::shared_ptr<VoxelLookup> GlobalVoxelMap::at( xkey_t xkey )
   if ( found == m_global_map.end() )
   {
     pose_t T = translate_T( pose_t::Identity(),  m_tree_params.xkey_to_vec_leaf_centered( xkey ) );
-    std::cerr << "inserting new local voxel map; xkey = " << xkey <<  "\n";
+    std::cerr << "inserting new local voxel map; xkey = " << std::setfill('0') << std::bitset<64>(xkey) <<  "\n";
+    std::cerr << "inserting new local voxel map; okey = " << str(m_tree_params.xkey_to_ockey( xkey )) <<  "\n";
     std::cerr << "inserting new local voxel map; coord= " << t_from_T( T ).transpose() <<  "\n";
     LocalVoxelLookupParams params 
     { 
@@ -421,6 +415,7 @@ std::shared_ptr<VoxelLookup> GlobalVoxelMap::at( xkey_t xkey )
       .xkey = xkey,
       .count = m_count++, 
       .tree_params = m_default_params.tree_params,
+      .submap_tree_params = m_default_params.submap_tree_params,
       .quantizer = m_quantizer,
     };
 
@@ -538,10 +533,11 @@ VoxelLookup::VoxelLookup( const LocalVoxelLookupParams& params )
 {
   std::cerr << "VoxelLookup: pose = \n";
   std::cerr << params.pose << "\n";
-  std::cerr << "VoxelLookup: maxdepth   = " <<  params.tree_params.maxdepth  << "\n";
-  std::cerr << "VoxelLookup: max_extent = " <<  params.tree_params.max_extent()  << "\n";
-  std::cerr << "VoxelLookup: side_length= " <<  params.side_length  << "\n";
-  std::cerr << "VoxelLookup: res  = " << params.tree_params.res << "\n";
+  std::cerr << "VoxelLookup: maxdepth     = " <<  params.tree_params.maxdepth  << "\n";
+  std::cerr << "VoxelLookup: max_extent   = " <<  params.tree_params.max_extent()  << "\n";
+  std::cerr << "VoxelLookup: side_length  = " <<  params.side_length  << "\n";
+  std::cerr << "VoxelLookup: res          = " << params.tree_params.res << "\n";
+  std::cerr << "VoxelLookup: res (submap) = " << params.submap_tree_params.res << "\n";
 };
 
 std::optional<xkey_t> VoxelLookup::local_key( const pose_t& mapper_pose, xkey_t xkey )
@@ -582,13 +578,8 @@ void VoxelLookup::put( size_t seq_id, const pose_t& T, const Record* const& v )
   auto xkey_lframe = local_key( T, v->xkey );
   if ( xkey_lframe.has_value() )
   {
-    auto cell = m_map.find( xkey_lframe.value() );
-    if ( cell == m_map.end() )
-    {
-      m_map.insert_or_assign( xkey_lframe.value(), cell_t {} );
-      cell = m_map.find( xkey_lframe.value() );
-    }
-    _put( cell->second, seq_id, v );
+    _put( m_map[xkey_lframe.value()], seq_id, v );
+    m_reverse_index[seq_id].insert( xkey_lframe.value() );
   }
 }
 
@@ -600,10 +591,11 @@ void VoxelLookup::put( size_t seq_id, const pose_t& T, const std::vector<const R
   }
 }
 
-void VoxelLookup::erase( size_t seq_id, const std::vector<xkey_t>& xkeys )
+void VoxelLookup::erase( size_t seq_id )
 {
-  std::vector<xkey_t> to_erase;
-  for ( auto& xkey : xkeys )
+  std::vector<xkey_t> cells_to_erase;
+
+  for ( auto& xkey : m_reverse_index[seq_id] )
   {
     auto find = m_map.find(xkey);
     if ( find != m_map.end() )
@@ -615,32 +607,21 @@ void VoxelLookup::erase( size_t seq_id, const std::vector<xkey_t>& xkeys )
       }
       if ( cell.empty() )
       {
-        to_erase.push_back( xkey );
+        cells_to_erase.push_back( xkey );
       }
     }
   }
-  std::cerr << "visited (using lookup) " << xkeys.size() << " / " << m_map.size() << " cells in block " << m_params.count << "\n";
-  std::cerr << "cleared and erasing    " << to_erase.size() << " / " << m_map.size() << " cells in block " << m_params.count << "\n";
-  for ( auto& key : to_erase )
+
+  std::cerr << "visited (using lookup) " << m_reverse_index[seq_id].size() << " / " << m_map.size() << " cells in block " << m_params.count << "\n";
+  std::cerr << "cleared and erasing    " << cells_to_erase.size() << " / " << m_map.size() << " cells in block " << m_params.count << "\n";
+
+  for ( auto& key : cells_to_erase )
   {
     m_map.erase( key );
   }
-}
 
-void VoxelLookup::erase( size_t seq_id, const pose_t& T, const std::vector<const Record*>& records )
-{
-  auto local_xkeys = local_occupied_keys( T, records );
-  erase( seq_id, local_xkeys );
-}
+  m_reverse_index.erase( seq_id );
 
-void VoxelLookup::erase( size_t seq_id )
-{
-  std::vector<xkey_t> all_keys;
-  for ( auto& [k,_] : m_map )
-  {
-    all_keys.push_back(k);
-  }
-  erase( seq_id, all_keys );
 }
 
 Record VoxelLookup::_get( cell_t& existing )
@@ -652,7 +633,14 @@ Record VoxelLookup::_get( cell_t& existing )
     auto inner_it = outer_it->second.begin();
     while ( inner_it != outer_it->second.end() )
     {
-      out.merge_weighted( **inner_it++, m_params.quantizer );
+      out.merge_weighted( **inner_it, m_params.quantizer );
+      if ( out.similarities.hasNaN() )
+      {
+        std::cerr << "NaN detected in cell get operation!\n";
+        std::cerr << "cell key = " << outer_it->first << "\n";
+        std::cerr << "item ptr = " << *inner_it << "\n";
+      }
+      inner_it++;
     }
     outer_it++;
   }

@@ -28,6 +28,7 @@ setup(
     entry_points={
         'console_scripts': [
             'mapper = mvdb_mapper.mapper_node:main',
+            'file_mapper = mvdb_mapper.map_in_files:map_in_files'
         ],
     },
 )

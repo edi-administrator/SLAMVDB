@@ -4,7 +4,8 @@ from tf2_ros import TransformBroadcaster
 from geometry_msgs.msg import TransformStamped
 from sensor_msgs.msg import PointCloud2
 import open3d as o3d
-from mvdb_py.utils import pcd_to_pointcloud, pointcloud_to_pcd, matrix_to_transform_msg
+from mvdb_py.utils import pcd_to_pointcloud, matrix_to_transform_msg
+from mvdb_py.pointcloud import PointCloudNP
 from .config import Config
 from .tracker import Tracker
 
@@ -30,7 +31,16 @@ class TrackerNode(Node):
     
     def input_cb(self, msg: PointCloud2):
 
-        scan = pointcloud_to_pcd(msg, crop=True, crop_radius=self.config.CROP_RADIUS)
+        pcd = PointCloudNP(
+            msg, 
+            row_step=self.config.CROP_ROW_STEP,
+            col_step=self.config.CROP_COL_STEP,
+            col_major=self.config.CROP_COLMAJOR, 
+            field_filter=["x", "y", "z"]
+        ).crop(self.config.CROP_RADIUS).azimuth_range(self.config.CROP_THETA_START, self.config.CROP_THETA_END)
+
+        scan = pcd.o3d()
+        # scan = pointcloud_to_pcd(msg, crop=True, crop_radius=self.config.CROP_RADIUS)
         self.tracker.insert_scan(o3d.geometry.PointCloud(scan))
         
         scan.transform(self.tracker.T_latest)
