@@ -8,7 +8,6 @@ Currently only tested on Ubuntu 22.04LTS running ROS2 humble.
 
 TODO:
 * GNSS constraints (present in prototype, not ported yet);
-* IMU-based gravity alignment
 * Publication, quantiative assessment, utilities related to validation and testing
 
 Included packages:
