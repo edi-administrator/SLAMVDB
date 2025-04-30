@@ -1,5 +1,2 @@
-TRACK_FILES_IN: /mnt/media/user/repos/image_semantic_classification/data/synchro_test_0/converted_bag
-TRACK_FILES_OUT: /mnt/media/user/repos/image_semantic_classification/data/synchro_test_0/mapper_poses
-
 # COURTYARD
 GRAVITY_BYPASS: True
